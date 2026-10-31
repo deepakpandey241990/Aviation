@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Aviation Channel Audio Transcriber & Normalizer</title>
+  <!-- jsPDF & autotable CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b111e;
+      --card-bg: #151f32;
+      --accent: #2563eb;
+      --accent-active: #1d4ed8;
+      --border: #23334d;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --success: #10b981;
+      --danger: #ef4444;
+      --atco-color: #38bdf8;
+      --pilot-color: #f59e0b;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      padding: 14px;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #fff;
+    }
+    p.subtitle {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .hud-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .timer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .timer-display {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 1.9rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #38bdf8;
+      text-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+    .status-active .status-dot {
+      background: var(--danger);
+      animation: pulse 1.2s infinite;
+    }
+    .status-active {
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.15);
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .channel-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .input-group label {
+      display: block;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .input-group input {
+      width: 100%;
+      background: #0d1523;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: #fff;
+      font-size: 0.82rem;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 0.8fr;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    button {
+      padding: 10px 8px;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .btn-record {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-record.recording {
+      background: var(--danger);
+    }
+    .btn-pdf {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid var(--border);
+    }
+    .btn-clear {
+      background: #27272a;
+      color: #f87171;
+      border: 1px solid #3f3f46;
+    }
+    .btn-clear:active {
+      background: #3f3f46;
+    }
+    .btn-pdf:disabled, .btn-clear:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .transcript-container {
+      flex: 1;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 320px;
+    }
+    .transcript-header {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+    .transcript-log {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+    }
+    .log-item {
+      background: #0d1523;
+      border-left: 3px solid #64748b;
+      border-radius: 0 6px 6px 0;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .log-item.atco {
+      border-left-color: var(--atco-color);
+    }
+    .log-item.pilot {
+      border-left-color: var(--pilot-color);
+    }
+    .log-meta {
+      display: flex;
+      gap: 8px;
+      font-size: 0.75rem;
+      font-family: monospace;
+      margin-bottom: 3px;
+    }
+    .log-time {
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .log-speaker {
+      font-weight: 700;
+    }
+    .log-speaker.atco {
+      color: var(--atco-color);
+    }
+    .log-speaker.pilot {
+      color: var(--pilot-color);
+    }
+    .log-text {
+      color: #e2e8f0;
+      word-break: break-word;
+    }
+    .live-interim {
+      font-style: italic;
+      color: #94a3b8;
+      font-size: 0.8rem;
+      padding: 6px 10px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      margin-top: 4px;
+    }
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      margin: auto;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Aviation Channel Transcriber</h1>
+    <p class="subtitle">Deepak Pandey</p>
+  </header>
+
+  <div class="hud-card">
+    <div class="timer-row">
+      <div>
+        <div style="font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Channel Timer (UTC)</div>
+        <div id="timerDisplay" class="timer-display">00:00:00</div>
+      </div>
+      <div id="statusBadge" class="status-badge">
+        <div class="status-dot"></div>
+        <span id="statusText">STANDBY</span>
+      </div>
+    </div>
+
+    <!-- Date & Start Time Inputs -->
+    <div class="channel-inputs">
+      <div class="input-group">
+        <label>Date (UTC)</label>
+        <input type="date" id="recordDateUTC">
+      </div>
+      <div class="input-group">
+        <label>Start Time UTC (HHMMSS)</label>
+        <input type="text" id="startTimeInput" value="000000" maxlength="6" placeholder="000000 or 144500" oninput="onStartTimeChanged()">
+      </div>
+    </div>
+
+    <div class="channel-inputs">
+      <div class="input-group">
+        <label>Sector / Position</label>
+        <input type="text" id="sectorName" value="TOWER / 118.1 MHz" placeholder="e.g. TOWER 118.1">
+      </div>
+      <div class="input-group">
+        <label>Recorder / Unit ID</label>
+        <input type="text" id="unitId" value="VFR-REC-01" placeholder="e.g. REC-01">
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="recordBtn" class="btn-record" onclick="toggleRecording()">
+        <svg id="recIcon" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6"/>
+        </svg>
+        <span id="recBtnText">Record</span>
+      </button>
+      <button id="pdfBtn" class="btn-pdf" onclick="generatePDF()" disabled>
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <span>Export</span>
+      </button>
+      <button id="clearBtn" class="btn-clear" onclick="clearTranscript()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+        </svg>
+        <span>Clear</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="transcript-container">
+    <div class="transcript-header">
+      <span>Live Channel Transcript Log</span>
+      <span id="logCount">0 Entries</span>
+    </div>
+    <div id="transcriptLog" class="transcript-log">
+      <div id="emptyMsg" class="empty-state">Set start time and tap "Record" to begin monitoring.</div>
+    </div>
+    <div id="liveInterim" class="live-interim" style="display:none;"></div>
+  </div>
+
+  <script>
+    let isRecording = false;
+    let recognition = null;
+    let timerInterval = null;
+    let startTimeMillis = null;
+    let entries = [];
+    let lastActiveCallsign = null;
+
+    // Set today's UTC date by default in the date picker
+    (function initDefaultDate() {
+      const todayUTC = new Date().toISOString().substring(0, 10);
+      document.getElementById('recordDateUTC').value = todayUTC;
+    })();
+
+    // Indian ATS Route Waypoint Database
+    const indianATSWaypoints = new Set([
+      "GUDUM", "BUTOP", "MERAX", "OSNUP", "TEPAN", "ASLUK", "BUBIN", "BIKEN", "ARRAN", "REBON",
+      "SAMAR", "PIPEN", "DABAN", "AKUDO", "LOVPA", "GULAP", "IKANI", "PABLA", "SAKEN", "SUDOT",
+      "TUMIX", "VABDI", "NIPAN", "KABAR", "OPAMO", "IGARX", "AGETA", "IKAVA", "MESVI", "NONUK",
+      "PURVI", "SULOM", "UGABA", "VASLA", "ZOBAK", "DIPID", "GUDAS", "IBANI", "LEPRA", "POSIG",
+      "DADRI", "ALIGARH", "BHATINDA", "SARSWA",
+      "APANO", "EXOLU", "RAGMA", "TEBAM", "BUSBO", "LOTAV", "KARIK", "NOBAT", "VAXIM", "TEPAL",
+      "DONSA", "GOBLI", "DOLDA", "IKABA", "EMRAN", "AKTIV", "BILUT", "DAKOR", "ESBOK", "GIRNA",
+      "KANUS", "MELOM", "NINAT", "OLPAS", "PARVA", "RABUR", "SURAT", "TARAP", "URTAK", "VINUM",
+      "WAGHA", "ANUTI", "BIBGO", "DUGOS", "EPKOS", "GUNAG", "HIMAT", "JALNA", "KOPAR", "METUS",
+      "MOBEK", "OSATA", "RUDRA", "SANAT", "TAMID",
+      "MEPOX", "DOPID", "TEBRO", "GOMOT", "LARIK", "RINDA", "BUBKO", "GURAS", "EPVOS", "PALAS",
+      "SAGAR", "KASEN", "IBANI", "DOTEN", "AVPOP", "BAMUR", "CHAND", "DIRAN", "EKBIS", "GOPAL",
+      "JAMBO", "KALNA", "LALIT", "MATUR", "NABHA", "ORISA", "PATNA", "RAJAN", "SARAN", "TATAN",
+      "UDAYP", "VARAN", "WALTA", "AGART", "BOGRA", "COOCH", "DHUBL", "FARAK", "GAYAA", "HAZAR",
+      "KANTI", "MALDA", "PANAG", "SILIG",
+      "IDASO", "DORAM", "POMAN", "KAKIN", "BODEL", "ATETA", "GUNIM", "ADUXI", "GIDAN", "SUGID",
+      "VEMBI", "OBNIL", "ANIKU", "BOSRA", "CLAVA", "DIVSU", "EGOLU", "FALNA", "GUNTO", "HOSUR",
+      "ITURI", "JALUR", "KODIK", "LATUR", "MEDAK", "NANDI", "ORTEL", "POONA", "RAJAH", "SALEM",
+      "TAMBA", "UDUPI", "VELLR", "WARGL", "YELUR", "ZAMOR", "AROSA", "BULKA", "CIRNA", "DUVUR",
+      "GURUR", "KAVLI", "MANIK", "NIPAD", "RINTO", "TELAP", "VEMAR",
+      "BBB", "BBI", "BPL", "BBD", "BOM", "CCU", "DEL", "HYD", "JAI", "LKN", "MAA", "MHA",
+      "NAG", "PAT", "RPR", "TRV", "VGA", "VNS", "COK", "GOA", "AMD", "IXR", "IXC", "IXB"
+    ]);
+
+    // Acoustic / Phonetic homophone dictionary for Indian ATS Waypoints
+    const waypointAcousticAliases = [
+      { regex: /\b(good\s*um|gud\s*um|goodam)\b/gi, canonical: 'GUDUM' },
+      { regex: /\b(door\s*arm|dharam|dhoram)\b/gi, canonical: 'DORAM' },
+      { regex: /\b(may\s*pox|may\s*pocks|mepox)\b/gi, canonical: 'MEPOX' },
+      { regex: /\b(app\s*anno|appano|apano)\b/gi, canonical: 'APANO' },
+      { regex: /\b(rag\s*ma|ragma)\b/gi, canonical: 'RAGMA' },
+      { regex: /\b(sagar|sugar|sagur)\b/gi, canonical: 'SAGAR' },
+      { regex: /\b(who\s*sir|hosur|hoser)\b/gi, canonical: 'HOSUR' },
+      { regex: /\b(gun\s*im|goon\s*im|gunim)\b/gi, canonical: 'GUNIM' },
+      { regex: /\b(tie\s*pan|teppan|tepan)\b/gi, canonical: 'TEPAN' },
+      { regex: /\b(ray\s*bon|re\s*bon|rebon)\b/gi, canonical: 'REBON' },
+      { regex: /\b(boo\s*bin|boobin|bubin)\b/gi, canonical: 'BUBIN' },
+      { regex: /\b(bow\s*del|bodle|bodel)\b/gi, canonical: 'BODEL' },
+      { regex: /\b(boss\s*ra|bosra)\b/gi, canonical: 'BOSRA' },
+      { regex: /\b(ex\s*olu|exolu)\b/gi, canonical: 'EXOLU' },
+      { regex: /\b(eye\s*daso|idaso)\b/gi, canonical: 'IDASO' },
+      { regex: /\b(poe\s*man|poman)\b/gi, canonical: 'POMAN' },
+      { regex: /\b(car\s*ick|karik)\b/gi, canonical: 'KARIK' },
+      { regex: /\b(no\s*bat|nobat)\b/gi, canonical: 'NOBAT' },
+      { regex: /\b(vax\s*im|vaxim)\b/gi, canonical: 'VAXIM' },
+      { regex: /\b(don\s*sa|donsa)\b/gi, canonical: 'DONSA' },
+      { regex: /\b(gob\s*lee|gobli)\b/gi, canonical: 'GOBLI' },
+      { regex: /\b(boo\s*top|butop)\b/gi, canonical: 'BUTOP' },
+      { regex: /\b(mer\s*axe|marx|merax)\b/gi, canonical: 'MERAX' },
+      { regex: /\b(oss\s*nup|osnup)\b/gi, canonical: 'OSNUP' },
+      { regex: /\b(as\s*luck|asluk)\b/gi, canonical: 'ASLUK' },
+      { regex: /\b(bee\s*ken|biken)\b/gi, canonical: 'BIKEN' },
+      { regex: /\b(ah\s*run|arran)\b/gi, canonical: 'ARRAN' },
+      { regex: /\b(pipe\s*en|pipen)\b/gi, canonical: 'PIPEN' },
+      { regex: /\b(doe\s*pid|dopid)\b/gi, canonical: 'DOPID' },
+      { regex: /\b(tay\s*bro|tebro)\b/gi, canonical: 'TEBRO' },
+      { regex: /\b(go\s*mot|gomot)\b/gi, canonical: 'GOMOT' },
+      { regex: /\b(la\s*rick|larik)\b/gi, canonical: 'LARIK' },
+      { regex: /\b(rin\s*da|rinda)\b/gi, canonical: 'RINDA' },
+      { regex: /\b(goo\s*ras|guras)\b/gi, canonical: 'GURAS' },
+      { regex: /\b(pa\s*las|palas)\b/gi, canonical: 'PALAS' },
+      { regex: /\b(soo\s*gid|sugid)\b/gi, canonical: 'SUGID' },
+      { regex: /\b(vem\s*bee|vembi)\b/gi, canonical: 'VEMBI' },
+      { regex: /\b(ob\s*nil|obnil)\b/gi, canonical: 'OBNIL' }
+    ];
+
+    const airlineAcousticPatterns = [
+      { regex: /\b(air\s*i\b|air\s*in\b|air\s*ind\b|air\s*india)\b/gi, canonical: 'Air India', code: 'AIC' },
+      { regex: /\b(in\s*the\s*go|in\s*the\s*gold|indigo)\b/gi, canonical: 'IndiGo', code: 'IGO' },
+      { regex: /\b(spice\s*jet|spicejet|spice)\b/gi, canonical: 'SpiceJet', code: 'SEJ' },
+      { regex: /\b(vistara|star\s*air)\b/gi, canonical: 'Vistara', code: 'VTI' },
+      { regex: /\b(akasa|akasa\s*air)\b/gi, canonical: 'Akasa', code: 'AKJ' },
+      { regex: /\b(emirates)\b/gi, canonical: 'Emirates', code: 'UAE' },
+      { regex: /\b(speed\s*bird|speedbird)\b/gi, canonical: 'Speedbird', code: 'BAW' }
+    ];
+
+    const phoneticAlphabet = {
+      'alpha': 'A', 'bravo': 'B', 'charlie': 'C', 'delta': 'D', 'echo': 'E',
+      'foxtrot': 'F', 'golf': 'G', 'hotel': 'H', 'india': 'I', 'juliett': 'J',
+      'juliet': 'J', 'kilo': 'K', 'lima': 'L', 'mike': 'M', 'november': 'N',
+      'oscar': 'O', 'papa': 'P', 'quebec': 'Q', 'romeo': 'R', 'sierra': 'S',
+      'tango': 'T', 'uniform': 'U', 'victor': 'V', 'whiskey': 'W', 'xray': 'X',
+      'x-ray': 'X', 'yankee': 'Y', 'zulu': 'Z'
+    };
+
+    const wordNumbers = {
+      'zero': '0', 'one': '1', 'two': '2', 'to': '2', 'too': '2',
+      'tree': '3', 'three': '3', 'four': '4', 'for': '4', 'fife': '5', 'five': '5',
+      'six': '6', 'seven': '7', 'eight': '8', 'ate': '8', 'niner': '9', 'nine': '9',
+      'ten': '10', 'eleven': '11', 'twelve': '12'
+    };
+
+    /**
+     * Parses HHMMSS string (e.g., "144500" or "000000") to total seconds
+     */
+    function parseStartTimeToSeconds() {
+      const val = (document.getElementById('startTimeInput').value || '000000').trim().padStart(6, '0');
+      const hh = parseInt(val.substring(0, 2), 10) || 0;
+      const mm = parseInt(val.substring(2, 4), 10) || 0;
+      const ss = parseInt(val.substring(4, 6), 10) || 0;
+      return (hh * 3600) + (mm * 60) + ss;
+    }
+
+    /**
+     * Formats total seconds into HH:mm:ss
+     */
+    function formatClockTime(totalSeconds) {
+      // Wrap around 24 hours (86400 seconds)
+      const secInDay = totalSeconds % 86400;
+      const hh = Math.floor(secInDay / 3600);
+      const mm = Math.floor((secInDay % 3600) / 60);
+      const ss = secInDay % 60;
+      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+    }
+
+    function onStartTimeChanged() {
+      if (!isRecording) {
+        const baseSec = parseStartTimeToSeconds();
+        document.getElementById('timerDisplay').innerText = formatClockTime(baseSec);
+      }
+    }
+
+    function updateTimer() {
+      if (!startTimeMillis) return;
+      const elapsedSeconds = Math.floor((Date.now() - startTimeMillis) / 1000);
+      const currentTotalSeconds = parseStartTimeToSeconds() + elapsedSeconds;
+      document.getElementById('timerDisplay').innerText = formatClockTime(currentTotalSeconds);
+    }
+
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Web Speech API is not supported on this browser. Please use Chrome on Android or Safari on iOS.");
+        return null;
+      }
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => {
+        document.getElementById('statusBadge').className = 'status-badge status-active';
+        document.getElementById('statusText').innerText = 'RECORDING';
+      };
+
+      // Debounce & Transmission Silence Segmenter (Fixes Android Chrome word-by-word streaming)
+      let utteranceBuffer = '';
+      let utteranceStartTime = null;
+      let silenceTimer = null;
+
+      function commitUtterance() {
+        if (!utteranceBuffer || utteranceBuffer.trim().length === 0) return;
+        const textToCommit = utteranceBuffer.trim();
+        const timeToCommit = utteranceStartTime || formatClockTime(parseStartTimeToSeconds() + Math.floor((Date.now() - startTimeMillis) / 1000));
+        
+        // Reset buffer state
+        utteranceBuffer = '';
+        utteranceStartTime = null;
+        document.getElementById('liveInterim').style.display = 'none';
+
+        handleFinalTranscript(textToCommit, timeToCommit);
+      }
+
+      rec.onresult = (event) => {
+        let textChunk = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          textChunk += event.results[i][0].transcript;
+        }
+        textChunk = textChunk.trim();
+        if (!textChunk) return;
+
+        // Record timestamp at the start of speech
+        if (!utteranceStartTime) {
+          const elapsed = startTimeMillis ? Math.floor((Date.now() - startTimeMillis) / 1000) : 0;
+          utteranceStartTime = formatClockTime(parseStartTimeToSeconds() + elapsed);
+        }
+
+        // On Android Chrome, incoming chunks can be cumulative (e.g. "Air", "Air 1 357")
+        if (textChunk.toLowerCase().startsWith(utteranceBuffer.toLowerCase())) {
+          utteranceBuffer = textChunk;
+        } else {
+          // New words in current transmission
+          utteranceBuffer = utteranceBuffer ? (utteranceBuffer + ' ' + textChunk) : textChunk;
+        }
+
+        // Display current live words in interim box
+        const interimDiv = document.getElementById('liveInterim');
+        interimDiv.style.display = 'block';
+        interimDiv.innerText = 'Listening: ' + rectifyAviationPhraseology(utteranceBuffer);
+
+        // Reset silence timer: Wait for 1.1s of silence before committing the completed transmission
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(commitUtterance, 1100);
+      };
+
+      rec.onerror = (e) => {
+        console.warn('Speech Recognition Error:', e.error);
+        if (e.error === 'not-allowed') {
+          alert('Microphone permission denied. Please allow microphone access in Chrome settings.');
+          stopRecording();
+        }
+      };
+
+      rec.onend = () => {
+        if (isRecording) {
+          try { rec.start(); } catch (err) { console.error('Restart failed', err); }
+        }
+      };
+
+      return rec;
+    }
+
+    function rectifyAviationPhraseology(rawText) {
+      if (!rawText) return '';
+      let text = rawText.trim();
+
+      text = text.replace(/\b(\w+)\s+\1\b/gi, '$1');
+      text = text.replace(/\b(reading|read)\s+5\b/gi, 'reading you 5');
+      text = text.replace(/\b(reading|read)\s+five\b/gi, 'reading you 5');
+      text = text.replace(/^you\s+500$/i, 'reading you 5');
+      text = text.replace(/\bread\s+read\s+you\b/gi, 'read you');
+
+      airlineAcousticPatterns.forEach(item => {
+        text = text.replace(item.regex, item.canonical);
+      });
+
+      waypointAcousticAliases.forEach(item => {
+        text = text.replace(item.regex, item.canonical);
+      });
+
+      const rawTokens = text.split(/\s+/);
+      for (let i = 0; i < rawTokens.length; i++) {
+        const cleanTok = rawTokens[i].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '').toUpperCase();
+        if (indianATSWaypoints.has(cleanTok)) {
+          const matchPunct = rawTokens[i].match(/[.,\/#!$%\^&\*;:{}=\-_`~()?]+$/);
+          const trailing = matchPunct ? matchPunct[0] : '';
+          rawTokens[i] = cleanTok + trailing;
+        }
+      }
+      text = rawTokens.join(' ');
+
+      const words = text.split(/\s+/);
+      for (let i = 0; i < words.length; i++) {
+        const clean = words[i].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '').toLowerCase();
+        if (phoneticAlphabet[clean]) {
+          const matchPunct = words[i].match(/[.,\/#!$%\^&\*;:{}=\-_`~()?]+$/);
+          const trailing = matchPunct ? matchPunct[0] : '';
+          words[i] = phoneticAlphabet[clean] + trailing;
+        } else if (i > 0 && wordNumbers[clean]) {
+          const prev = words[i - 1].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '');
+          if (/\d+$/.test(prev) || /(India|IndiGo|SpiceJet|Vistara|Akasa)$/i.test(prev)) {
+            words[i] = wordNumbers[clean];
+          }
+        }
+      }
+      text = words.join(' ');
+
+      text = text.replace(/\b(one|1)\s+(to|two|too|2)\s+([A-Z])\b/gi, '12$3');
+      text = text.replace(/\b(\d+)\s+(\d+)\s+([A-Z])\b/g, '$1$2$3');
+      text = text.replace(/\b(\d+)\s+([A-Z])\b/g, '$1$2');
+
+      airlineAcousticPatterns.forEach(item => {
+        const csRegex = new RegExp('\\b' + item.canonical + '\\s*(\\d{1,4}[A-Z]?)\\b', 'gi');
+        text = text.replace(csRegex, (match, suffix) => {
+          return item.code + suffix.toUpperCase();
+        });
+      });
+
+      return text;
+    }
+
+    function extractCallsignAndPosition(text) {
+      const tokens = text.replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/);
+
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i].toUpperCase();
+        if (['ILS', 'VOR', 'QNH', 'NDB', 'APP', 'TWR', 'GND', 'ACC', 'DEP', 'ARR', 'SID', 'STAR', 'VFR', 'IFR', 'RTE'].includes(tok)) {
+          continue;
+        }
+        if (/^[A-Z]{3}\d{1,4}[A-Z]?$/.test(tok)) {
+          return {
+            callsign: tok,
+            startIndex: i,
+            endIndex: i,
+            totalTokens: tokens.length
+          };
+        }
+      }
+      return null;
+    }
+
+    function analyzeSpeaker(text) {
+      const cleanUpper = text.toUpperCase();
+      const detected = extractCallsignAndPosition(text);
+
+      if (detected) {
+        lastActiveCallsign = detected.callsign;
+        const { startIndex, endIndex, totalTokens } = detected;
+        const isSpokenAlone = totalTokens <= 2 || (startIndex === 0 && endIndex === totalTokens - 1);
+        const isAtBeginning = startIndex === 0;
+        const isAtEnd = endIndex === totalTokens - 1;
+
+        if (isSpokenAlone) {
+          return { speaker: detected.callsign, callsign: detected.callsign };
+        }
+        if (isAtBeginning && !isAtEnd) {
+          return { speaker: 'ATCO', callsign: detected.callsign };
+        }
+        if (isAtEnd) {
+          return { speaker: detected.callsign, callsign: detected.callsign };
+        }
+        return { speaker: 'ATCO', callsign: detected.callsign };
+      }
+
+      const isPilotReadback = /READING|ROGER|WILCO|AFFIRM|NEGATIVE|CHECKED|UNABLE|ESTABLISHED|VACATED|FEET|FLIGHT LEVEL/i.test(cleanUpper);
+      if (isPilotReadback && lastActiveCallsign) {
+        return { speaker: lastActiveCallsign, callsign: lastActiveCallsign };
+      }
+
+      return { speaker: 'ATCO', callsign: lastActiveCallsign || 'N/A' };
+    }
+
+    function handleFinalTranscript(rawTranscript, customTimestamp) {
+      if (!rawTranscript || rawTranscript.trim().length === 0) return;
+      
+      const cleanedText = rectifyAviationPhraseology(rawTranscript);
+      if (!cleanedText) return;
+
+      const timestamp = customTimestamp || formatClockTime(parseStartTimeToSeconds() + (startTimeMillis ? Math.floor((Date.now() - startTimeMillis) / 1000) : 0));
+
+      // Guard: If the previous entry was identical or a subset emitted moments ago, replace it
+      if (entries.length > 0) {
+        const lastEntry = entries[entries.length - 1];
+        if (cleanedText.toLowerCase().startsWith(lastEntry.text.toLowerCase()) && cleanedText.length > lastEntry.text.length) {
+          // Replace partial row with the completed transmission
+          entries.pop();
+          const log = document.getElementById('transcriptLog');
+          if (log.lastElementChild && log.lastElementChild.classList.contains('log-item')) {
+            log.removeChild(log.lastElementChild);
+          }
+        } else if (lastEntry.text.toLowerCase() === cleanedText.toLowerCase()) {
+          // Discard duplicate echo
+          return;
+        }
+      }
+
+      const analysis = analyzeSpeaker(cleanedText);
+
+      const entry = {
+        timestamp: timestamp,
+        speaker: analysis.speaker,
+        callsign: analysis.callsign,
+        text: cleanedText
+      };
+
+      entries.push(entry);
+      renderNewEntry(entry);
+      document.getElementById('pdfBtn').disabled = false;
+      document.getElementById('clearBtn').disabled = false;
+      document.getElementById('logCount').innerText = `${entries.length} Entries`;
+    }
+
+    function renderNewEntry(entry) {
+      const log = document.getElementById('transcriptLog');
+      const emptyMsg = document.getElementById('emptyMsg');
+      if (emptyMsg) emptyMsg.remove();
+
+      const item = document.createElement('div');
+      const isAtco = entry.speaker === 'ATCO';
+      item.className = `log-item ${isAtco ? 'atco' : 'pilot'}`;
+
+      item.innerHTML = `
+        <div class="log-meta">
+          <span class="log-time">${entry.timestamp}</span>
+          <span class="log-speaker ${isAtco ? 'atco' : 'pilot'}">${entry.speaker}</span>
+        </div>
+        <div class="log-text">${escapeHtml(entry.text)}</div>
+      `;
+      log.appendChild(item);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function escapeHtml(string) {
+      return String(string).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function toggleRecording() {
+      if (!isRecording) { startRecording(); } else { stopRecording(); }
+    }
+
+    function startRecording() {
+      if (!recognition) {
+        recognition = initSpeechRecognition();
+        if (!recognition) return;
+      }
+      try {
+        startTimeMillis = Date.now();
+        timerInterval = setInterval(updateTimer, 500);
+        recognition.start();
+        isRecording = true;
+
+        document.getElementById('startTimeInput').disabled = true;
+        document.getElementById('recordDateUTC').disabled = true;
+
+        const btn = document.getElementById('recordBtn');
+        btn.classList.add('recording');
+        document.getElementById('recBtnText').innerText = 'Stop';
+      } catch (err) {
+        console.error('Failed to start recognition:', err);
+      }
+    }
+
+    function stopRecording() {
+      isRecording = false;
+      clearInterval(timerInterval);
+      if (recognition) {
+        try { recognition.stop(); } catch(e){}
+      }
+      document.getElementById('statusBadge').className = 'status-badge';
+      document.getElementById('statusText').innerText = 'STOPPED';
+
+      document.getElementById('startTimeInput').disabled = false;
+      document.getElementById('recordDateUTC').disabled = false;
+
+      const btn = document.getElementById('recordBtn');
+      btn.classList.remove('recording');
+      document.getElementById('recBtnText').innerText = 'Resume';
+      document.getElementById('liveInterim').style.display = 'none';
+    }
+
+    // Clear function
+    function clearTranscript() {
+      if (isRecording) {
+        stopRecording();
+      }
+      entries = [];
+      lastActiveCallsign = null;
+      startTimeMillis = null;
+
+      // Reset DOM log
+      const log = document.getElementById('transcriptLog');
+      log.innerHTML = '<div id="emptyMsg" class="empty-state">Log cleared. Ready for next session.</div>';
+      document.getElementById('logCount').innerText = '0 Entries';
+      document.getElementById('pdfBtn').disabled = true;
+
+      // Reset timer back to user configured start time (or 00:00:00)
+      onStartTimeChanged();
+    }
+
+    function generatePDF() {
+      if (entries.length === 0) {
+        alert("No transcript records available to export.");
+        return;
+      }
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+      const sector = document.getElementById('sectorName').value || 'TOWER 118.1';
+      const unit = document.getElementById('unitId').value || 'REC-01';
+      const userDateUTC = document.getElementById('recordDateUTC').value || new Date().toISOString().substring(0, 10);
+      const userStartTime = (document.getElementById('startTimeInput').value || '000000').padEnd(6, '0');
+
+      // Top banner
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, 210, 36, 'F');
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text("AIR TRAFFIC SERVICES - R/T CHANNEL TRANSCRIPT", 14, 13);
+
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(203, 213, 225);
+      doc.text(`Sector / Freq: ${sector}   |   Recorder Unit: ${unit}`, 14, 21);
+      doc.text(`Session Date: ${userDateUTC} UTC   |   Log Start Time: ${userStartTime} UTC`, 14, 27);
+      doc.text(`Mandate & Standard: ICAO Annex 10 Vol II & Doc 4444`, 14, 33);
+
+      const tableRows = entries.map(e => [
+        e.timestamp,
+        e.speaker,
+        e.text
+      ]);
+
+      doc.autoTable({
+        startY: 42,
+        head: [['Time (UTC)', 'Speaker / Ident', 'R/T Transmission Transcript']],
+        body: tableRows,
+        theme: 'striped',
+        styles: {
+          fontSize: 8.5,
+          cellPadding: 3,
+          valign: 'top',
+          overflow: 'linebreak'
+        },
+        headStyles: {
+          fillColor: [30, 41, 59],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold'
+        },
+        columnStyles: {
+          0: { cellWidth: 26, font: 'courier', fontStyle: 'bold', textColor: [51, 65, 85] },
+          1: { cellWidth: 36, fontStyle: 'bold' },
+          2: { cellWidth: 'auto' }
+        },
+        didParseCell: function(data) {
+          if (data.section === 'body' && data.column.index === 1) {
+            const speakerVal = data.cell.raw;
+            if (speakerVal === 'ATCO') {
+              data.cell.styles.textColor = [2, 132, 199];
+            } else {
+              data.cell.styles.textColor = [217, 119, 6];
+            }
+          }
+        },
+        margin: { top: 42, bottom: 20, left: 14, right: 14 }
+      });
+
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          `Official Air Traffic Record - Page ${i} of ${totalPages}`,
+          14,
+          doc.internal.pageSize.height - 10
+        );
+      }
+
+      const safeSector = sector.replace(/[^a-zA-Z0-9]/g, '_');
+      doc.save(`Aviation_Transcript_${safeSector}_${userDateUTC}_${userStartTime}Z.pdf`);
+    }
+  </script>
+</body>
+</html>
